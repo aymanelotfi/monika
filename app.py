@@ -22,7 +22,6 @@ from flask import (
     url_for,
     send_from_directory,
 )
-from werkzeug.utils import secure_filename
 
 # RealtimeTTS imports
 from RealtimeTTS import OrpheusEngine, TextToAudioStream
@@ -83,8 +82,6 @@ else:
 
 # --- Logging Setup ---
 log_level = logging.DEBUG if DEBUG_MODE else logging.INFO
-logging.basicConfig(level=log_level, format="%(asctime)s - %(levelname)s - %(message)s")
-
 # --- Ensure Upload Folder Exists ---
 if not os.path.exists(UPLOAD_FOLDER):
     try:
@@ -99,23 +96,25 @@ app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 300 * 1024 * 1024  # Limit upload size (e.g., 300MB)
 app.secret_key = SECRET_KEY
+app.logger.setLevel(logging.DEBUG)
+
 
 # --- Load Models and Initialize Engines ---
 # Load Whisper Model
 whisper_model = None
 try:
-    logging.info(f"Loading Whisper model: {MODEL_SIZE}...")
+    app.logger.info(f"Loading Whisper model: {MODEL_SIZE}...")
     whisper_model = whisper.load_model(MODEL_SIZE)
-    logging.info("Whisper model loaded successfully.")
+    app.logger.info("Whisper model loaded successfully.")
 except Exception as e:
-    logging.error(f"CRITICAL: Error loading Whisper model ({MODEL_SIZE}): {e}")
+    app.logger.error(f"CRITICAL: Error loading Whisper model ({MODEL_SIZE}): {e}")
     # Consider how to handle this error - maybe exit or run degraded
 
 # Initialize RealtimeTTS Engine
 tts_engine = None
 tts_stream = None
 try:
-    logging.info(f"Initializing TTS Engine: {TTS_ENGINE_NAME}")
+    app.logger.info(f"Initializing TTS Engine: {TTS_ENGINE_NAME}")
     if TTS_ENGINE_NAME == "orpheus":
         tts_engine = OrpheusEngine()
         # Add setup for other engines if needed here
@@ -125,10 +124,12 @@ try:
     tts_stream = TextToAudioStream(
         tts_engine, muted=True
     )  # Muted because we stream to client
-    logging.info(f"TTS Engine {TTS_ENGINE_NAME} initialized.")
+    app.logger.info(f"TTS Engine {TTS_ENGINE_NAME} initialized.")
 
 except Exception as e:
-    logging.error(f"CRITICAL: Error initializing TTS engine ({TTS_ENGINE_NAME}): {e}")
+    app.logger.error(
+        f"CRITICAL: Error initializing TTS engine ({TTS_ENGINE_NAME}): {e}"
+    )
     # Consider how to handle this error
 
 # --- TTS State Management ---
@@ -166,7 +167,7 @@ def create_wave_header_for_engine(engine):  # Same as FastAPI version
         wav_header.close()
         return wave_header_bytes
     except Exception as e:
-        logging.error(f"Error creating WAV header: {e}")
+        app.logger.error(f"Error creating WAV header: {e}")
         return b""  # Return empty bytes on error
 
 
@@ -181,26 +182,26 @@ def play_text_to_speech_task(
 ):
     """Background task to perform TTS synthesis and queue audio chunks."""
     instance_id = str(uuid.uuid4())[:8]
-    logging.info(
+    app.logger.info(
         f'[{instance_id}] Starting TTS synthesis background task for: "{text[:50]}..."'
     )
 
     def on_audio_chunk(chunk):
         # This function is called by RealtimeTTS when an audio chunk is ready
-        logging.debug(f"[{instance_id}] Received TTS chunk, adding to queue.")
+        app.logger.debug(f"[{instance_id}] Received TTS chunk, adding to queue.")
         audio_queue.put(chunk)
 
     try:
         if not stream:
             raise ValueError("TTS Stream not initialized")
         stream.feed(text)
-        logging.debug(f"[{instance_id}] Calling stream.play() (blocking).")
+        app.logger.debug(f"[{instance_id}] Calling stream.play() (blocking).")
         # stream.play is blocking until synthesis is complete or interrupted.
         stream.play(on_audio_chunk=on_audio_chunk, muted=True)
-        logging.info(f"[{instance_id}] TTS synthesis complete in background task.")
+        app.logger.info(f"[{instance_id}] TTS synthesis complete in background task.")
         audio_queue.put(None)  # Use None as a sentinel to signal the end of audio
     except Exception as e:
-        logging.error(
+        app.logger.error(
             f"[{instance_id}] Error during TTS processing in background task: {e}",
             exc_info=True,
         )
@@ -208,12 +209,12 @@ def play_text_to_speech_task(
     finally:
         # CRITICAL: Release the semaphore so other requests can proceed
         semaphore.release()
-        logging.debug(f"[{instance_id}] Released TTS semaphore.")
+        app.logger.debug(f"[{instance_id}] Released TTS semaphore.")
 
 
 def tts_audio_stream_generator(audio_queue: Queue):
     """Generator function to yield audio chunks from the queue for Flask Response."""
-    logging.debug("Flask TTS audio generator started.")
+    app.logger.debug("Flask TTS audio generator started.")
     # Determine if header is needed (e.g., not ElevenLabs)
     send_wave_headers = True  # Assume WAV unless engine changes
     header_sent = False
@@ -223,20 +224,20 @@ def tts_audio_stream_generator(audio_queue: Queue):
         chunk = audio_queue.get()
 
         if chunk is None:  # Check for the sentinel value
-            logging.debug("Flask TTS generator received None sentinel, stopping.")
+            app.logger.debug("Flask TTS generator received None sentinel, stopping.")
             break  # Exit the loop to end the stream
 
         if send_wave_headers and not header_sent:
             header = create_wave_header_for_engine(tts_engine)
             if header:
-                logging.debug("Flask TTS generator yielding WAV header.")
+                app.logger.debug("Flask TTS generator yielding WAV header.")
                 yield header
             header_sent = True  # Don't send header again
 
-        logging.debug(f"Flask TTS generator yielding audio chunk size {len(chunk)}.")
+        app.logger.debug(f"Flask TTS generator yielding audio chunk size {len(chunk)}.")
         yield chunk
 
-    logging.debug("Flask TTS audio generator finished.")
+    app.logger.debug("Flask TTS audio generator finished.")
 
 
 # --- Flask Routes ---
@@ -262,53 +263,54 @@ def index():
 @app.route("/transcribe", methods=["POST"])
 def transcribe_audio():
     """Handles audio file upload, transcribes using Whisper."""
+    app.logger.info(f"Fuck off")
     time_0 = datetime.now()
     if not whisper_model:
-        logging.error("Transcription request failed: Whisper model not loaded.")
+        app.logger.info("Transcription request failed: Whisper model not loaded.")
         return jsonify(
             {"error": "Transcription service unavailable: Model not loaded."}
         ), 503
 
     if "file" not in request.files:
-        logging.warning("Transcription request failed: No 'file' part in request.")
+        app.logger.info("Transcription request failed: No 'file' part in request.")
         return jsonify({"error": "No file part in the request."}), 400
 
     file = request.files["file"]
 
     if file.filename == "":
-        logging.warning("Transcription request failed: No file selected.")
+        app.logger.info("Transcription request failed: No file selected.")
         return jsonify({"error": "No selected file."}), 400
 
     # Optional: Check file extension using ALLOWED_EXTENSIONS
     # if file and allowed_file(file.filename):
     if file:  # Proceed even if extension check is skipped or fails initially
         # Use secure_filename for safety, although we generate a UUID-based name anyway
-        # original_filename = secure_filename(file.filename) # Keep for logging if needed
+        # original_filename = secure_filename(file.filename) # Keep for app.logger if needed
         file_extension = (
             file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "webm"
         )
         temp_filename = f"recording_{uuid.uuid4()}.{file_extension}"
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], temp_filename)
 
-        logging.info(f"Received audio file: {file.filename}, saving to {filepath}")
+        app.logger.info(f"Received audio file: {file.filename}, saving to {filepath}")
 
         try:
             file.save(filepath)
-            logging.info(f"File saved successfully to {filepath}")
+            app.logger.info(f"File saved successfully to {filepath}")
 
             # Perform transcription
-            logging.info(f"Starting transcription for {filepath}...")
+            app.logger.info(f"Starting transcription for {filepath}...")
             # Use fp16=False if on CPU or experiencing issues
             result = whisper_model.transcribe(filepath, fp16=False)
             transcript_text = result["text"]
-            logging.info(f"Transcription complete for {filepath}.")
+            app.logger.info(f"Transcription complete for {filepath}.")
             time_1 = datetime.now()
             time_diff = (time_1 - time_0).total_seconds()
-            logging.info(f"Transcription processing time: {time_diff:.2f} seconds")
+            app.logger.info(f"Transcription processing time: {time_diff:.2f} seconds")
             return jsonify({"transcript": transcript_text})
 
         except Exception as e:
-            logging.error(
+            app.logger.error(
                 f"Error during transcription processing for {file.filename}: {e}",
                 exc_info=True,
             )
@@ -318,12 +320,12 @@ def transcribe_audio():
             if os.path.exists(filepath):
                 try:
                     os.remove(filepath)
-                    logging.info(f"Removed temporary file: {filepath}")
+                    app.logger.info(f"Removed temporary file: {filepath}")
                 except OSError as e:
-                    logging.error(f"Error removing temporary file {filepath}: {e}")
+                    app.logger.error(f"Error removing temporary file {filepath}: {e}")
     else:
         # This part might be reached if allowed_file check is enabled and fails
-        logging.warning(
+        app.logger.warning(
             f"Transcription request failed: File type not allowed ({file.filename})."
         )
         return jsonify({"error": "File type not allowed."}), 400
@@ -333,7 +335,7 @@ def transcribe_audio():
 def gemini_process_text():
     """Receives text, processes it with Gemini, returns processed text."""
     if not GEMINI_API_KEY:
-        logging.error("Gemini process request failed: API key not configured.")
+        app.logger.error("Gemini process request failed: API key not configured.")
         return jsonify(
             {"error": "Gemini processing is not available (API key missing)."}
         ), 503
@@ -343,7 +345,7 @@ def gemini_process_text():
         return jsonify({"error": "Missing 'text' field in request body."}), 400
 
     original_text = req_data["text"]
-    logging.info(f"Received text for Gemini processing: '{original_text[:100]}...'")
+    app.logger.info(f"Received text for Gemini processing: '{original_text[:100]}...'")
 
     try:
         # Initialize the specific model for generation
@@ -358,13 +360,13 @@ def gemini_process_text():
         # Extract the text from the response
         # Handle potential blocks or safety issues if needed
         processed_text = response.text
-        logging.info(f"Gemini processed text: '{processed_text[:100]}...'")
+        app.logger.info(f"Gemini processed text: '{processed_text[:100]}...'")
 
         return jsonify({"processed_text": processed_text})
 
     # Handle potential errors from the Gemini API
     except Exception as e:
-        logging.error(f"Error during Gemini API call: {e}", exc_info=True)
+        app.logger.error(f"Error during Gemini API call: {e}", exc_info=True)
         # Check for specific Gemini exceptions if the library provides them
         # For now, return a generic error
         return jsonify({"error": f"Gemini processing failed: {str(e)}"}), 500
@@ -376,18 +378,18 @@ def text_to_speech():
     time_0 = datetime.now()
     text = request.args.get("text", "")
     if not text:
-        logging.warning("TTS request failed: No 'text' query parameter.")
+        app.logger.warning("TTS request failed: No 'text' query parameter.")
         return jsonify({"error": "No text provided for TTS."}), 400
 
     if not tts_engine or not tts_stream:
-        logging.error("TTS request failed: TTS Engine or Stream not initialized.")
+        app.logger.error("TTS request failed: TTS Engine or Stream not initialized.")
         return jsonify({"error": "Text-to-Speech service unavailable."}), 503
 
-    logging.info(f'Received TTS request for text: "{text[:50]}..."')
+    app.logger.info(f'Received TTS request for text: "{text[:50]}..."')
 
     # Try to acquire the semaphore without blocking
     if play_text_to_speech_semaphore.acquire(blocking=False):
-        logging.debug("TTS semaphore acquired.")
+        app.logger.debug("TTS semaphore acquired.")
         # The background task will put data into the shared tts_audio_queue
         threading.Thread(
             target=play_text_to_speech_task,
@@ -400,8 +402,8 @@ def text_to_speech():
         media_type = "audio/wav"  # Default, adjust if using engines like elevenlabs
         time_1 = datetime.now()
         time_diff = (time_1 - time_0).total_seconds()
-        logging.info(f"TTS request processing time: {time_diff:.2f} seconds")
-        logging.debug(f"Streaming TTS response with mimetype {media_type}")
+        app.logger.info(f"TTS request processing time: {time_diff:.2f} seconds")
+        app.logger.debug(f"Streaming TTS response with mimetype {media_type}")
         # Use stream_with_context for safety, though direct generator might work here too.
         # stream_with_context ensures the generator has access to request context if needed.
         return Response(
@@ -416,7 +418,7 @@ def text_to_speech():
         )
     else:
         # Service is busy with another TTS request
-        logging.warning("TTS request rejected: Service busy (semaphore locked).")
+        app.logger.warning("TTS request rejected: Service busy (semaphore locked).")
         return jsonify(
             {
                 "error": "Text-to-Speech service is currently busy processing another request. Please try again shortly."
@@ -434,4 +436,4 @@ if __name__ == "__main__":
         print("WARNING: TTS engine failed to load. Speech synthesis will not work.")
 
     # Use host='0.0.0.0' to make it accessible on your network
-    app.run(port=APP_PORT)
+    app.run(port=APP_PORT, debug=True)
