@@ -3,331 +3,53 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Whisper STT </title>
+    <title>Whisper STT -> RealtimeTTS Pipeline</title>
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <style>
-        /* (Keep your existing styles) */
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 2em;
-            background-color: #f4f4f4;
-            color: #333;
-            display: flex;
-            justify-content: center;
-        }
-        .container {
-            background-color: #fff;
-            padding: 2em;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            max-width: 700px;
-            width: 100%;
-        }
-        h1, h2 {
-            text-align: center;
-            color: #0056b3;
-            margin-bottom: 1em;
-        }
-        .section {
-            margin-bottom: 2.5em;
-            padding-bottom: 1.5em;
-            border-bottom: 1px solid #eee;
-        }
-        .section:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-            padding-bottom: 0;
-        }
-        form {
-            margin-bottom: 1em; /* Reduced margin */
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        input[type=file] {
-            border: 1px solid #ccc;
-            display: inline-block;
-            padding: 6px 12px;
-            cursor: pointer;
-            margin-bottom: 1em;
-        }
-        input[type=submit], button {
-            background-color: #007bff;
-            color: white;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 1em;
-            transition: background-color 0.2s ease;
-            margin: 0.25em; /* Spacing for buttons */
-        }
-        input[type=submit]:hover, button:hover {
-            background-color: #0056b3;
-        }
-        button:disabled {
-            background-color: #cccccc;
-            cursor: not-allowed;
-        }
-        #recordControls {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin-bottom: 1em;
-        }
-        #status {
-            text-align: center;
-            margin-bottom: 1em;
-            font-weight: bold;
-            min-height: 1.2em; /* Prevent layout shift */
-        }
-         #audioPlayback {
-            display: block; /* Make it take its own line */
-            margin: 1em auto; /* Center it */
-            max-width: 100%;
-        }
-        .transcription-box {
-            margin-top: 1.5em;
-        }
-        textarea {
-            width: 100%;
-            min-height: 100px; /* Slightly smaller default */
-            margin-top: 0.5em;
-            padding: 0.8em;
-            box-sizing: border-box;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 0.95em;
-            background-color: #e9ecef;
-        }
-        .flashes { /* (Keep flash styles) */ }
-        .error-message { /* (Keep error styles) */ }
+        /* Add some basic styling */
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: auto; background-color: #f4f4f4; }
+        .container { background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1, h2 { text-align: center; color: #333; }
+        .section { margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+        .section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+        #recordControls, #ttsControls { display: flex; justify-content: center; gap: 15px; margin-bottom: 15px; flex-wrap: wrap; }
+        button { background-color: #007bff; color: white; padding: 10px 18px; border: none; border-radius: 5px; cursor: pointer; font-size: 1em; transition: background-color 0.2s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        textarea { width: 95%; min-height: 100px; margin-top: 10px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; display: block; margin-left: auto; margin-right: auto;}
+        audio { display: block; margin: 15px auto; max-width: 100%; }
+        #status, #ttsStatus { text-align: center; margin: 15px 0; font-weight: bold; min-height: 1.2em; color: #555; }
+        .error { color: red; font-weight: bold;}
+        .success { color: green; font-weight: bold;}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Whisper Speech-to-Text</h1>
+        <h1>Speech-to-Text & Text-to-Speech</h1>
 
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            <ul class="flashes">
-            {% for category, message in messages %}
-              <li class="{{ category }}">{{ message }}</li>
-            {% endfor %}
-            </ul>
-          {% endif %}
-        {% endwith %}
         <div class="section">
-            <h2>Record Audio Directly</h2>
+            <h2>1. Record & Transcribe</h2>
             <div id="status">Press 'Start Recording'</div>
             <div id="recordControls">
                 <button id="startButton">Start Recording</button>
                 <button id="stopButton" disabled>Stop Recording</button>
             </div>
-            <audio id="audioPlayback" controls></audio>
-            <div class="transcription-box">
-                <h3>Recording Transcription:</h3>
-                <textarea id="recordingTranscript" readonly placeholder="Transcription will appear here..."></textarea>
-            </div>
+            <audio id="recordedAudioPlayback" controls title="Listen to your recording"></audio>
+            <h3>Transcription Result:</h3>
+            <textarea id="transcriptOutput" readonly placeholder="Transcription will appear here..."></textarea>
         </div>
 
-    </div> <script>
-        const startButton = document.getElementById('startButton');
-        const stopButton = document.getElementById('stopButton');
-        const statusDiv = document.getElementById('status');
-        const audioPlayback = document.getElementById('audioPlayback');
-        const recordingTranscriptTextarea = document.getElementById('recordingTranscript');
+        <div class="section">
+            <h2>2. Synthesize Speech</h2>
+             <div id="ttsStatus">Enter text or use transcription above.</div>
+             <div id="ttsControls">
+                 <button id="speakButton" disabled>Speak Transcribed Text</button>
+                 </div>
+             <audio id="ttsAudioOutput" controls title="Listen to synthesized speech"></audio>
+        </div>
 
-        let mediaRecorder;
-        let audioChunks = [];
-        let audioStream;
+    </div>
 
-        // Check for browser support
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            statusDiv.textContent = 'getUserMedia not supported on your browser!';
-            startButton.disabled = true;
-            stopButton.disabled = true;
-        }
-
-        startButton.onclick = async () => {
-            statusDiv.textContent = 'Requesting microphone access...';
-            recordingTranscriptTextarea.value = ''; // Clear previous transcript
-            audioPlayback.src = ''; // Clear previous playback
-            audioPlayback.removeAttribute("src"); // Ensure playback is cleared fully
-
-            try {
-                audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                statusDiv.textContent = 'Microphone access granted. Initializing recorder...';
-
-                startButton.disabled = true;
-                stopButton.disabled = false;
-                audioChunks = []; // Reset chunks
-
-                // Try common MIME types
-                const mimeTypes = [
-                    'audio/webm;codecs=opus', // Preferred
-                    'audio/ogg;codecs=opus',
-                    'audio/webm',
-                    'audio/ogg',
-                    'audio/wav'
-                ];
-                let supportedMimeType = '';
-                for (const mimeType of mimeTypes) {
-                    if (MediaRecorder.isTypeSupported(mimeType)) {
-                        supportedMimeType = mimeType;
-                        break;
-                    }
-                }
-
-                if (!supportedMimeType) {
-                    console.warn("No preferred MIME type supported, using browser default.");
-                    mediaRecorder = new MediaRecorder(audioStream);
-                } else {
-                    console.log("Using MIME type:", supportedMimeType);
-                    mediaRecorder = new MediaRecorder(audioStream, { mimeType: supportedMimeType });
-                }
-
-                // --- DEBUGGING ---
-                mediaRecorder.ondataavailable = event => {
-                    console.log("ondataavailable fired. Chunk size:", event.data.size); // <-- DEBUG ADDED
-                    if (event.data.size > 0) {
-                         audioChunks.push(event.data);
-                    } else {
-                         console.warn("ondataavailable fired with empty chunk (size 0)."); // <-- DEBUG ADDED
-                    }
-                };
-
-                // --- DEBUGGING ---
-                mediaRecorder.onstop = () => {
-                    statusDiv.textContent = 'Recording stopped. Processing...';
-                    console.log("onstop fired. Chunks collected:", audioChunks); // <-- DEBUG ADDED
-
-                    // Check if chunks exist before creating blob
-                    if (!audioChunks || audioChunks.length === 0) {
-                        console.error("No audio chunks were collected! Cannot create Blob."); // <-- DEBUG MODIFIED
-                        statusDiv.textContent = 'Error: No audio data collected.';
-                        startButton.disabled = false;
-                        stopButton.disabled = true;
-                         // Stop microphone track(s) if stream exists
-                         if (audioStream) {
-                             audioStream.getTracks().forEach(track => track.stop());
-                             audioStream = null;
-                         }
-                        return; // Stop execution here if no chunks
-                    }
-
-                    const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-                    console.log("Audio Blob created. Size:", audioBlob.size); // <-- DEBUG ADDED
-
-                    const audioUrl = URL.createObjectURL(audioBlob);
-                    audioPlayback.src = audioUrl; // Allow playback
-
-                    // Check size before sending
-                    if (audioBlob.size === 0) {
-                         console.error("Audio Blob size is 0. Not sending to server."); // <-- DEBUG ADDED
-                         statusDiv.textContent = 'Error: Recorded audio is empty.';
-                         startButton.disabled = false;
-                         stopButton.disabled = true;
-                          // Stop microphone track(s) if stream exists
-                         if (audioStream) {
-                             audioStream.getTracks().forEach(track => track.stop());
-                             audioStream = null;
-                         }
-                         return; // Don't send if empty
-                    }
-
-                    // Send the audio blob to the server
-                    sendAudioToServer(audioBlob);
-
-                    // Stop microphone track(s)
-                    if (audioStream) { // Check if stream exists before stopping tracks
-                         audioStream.getTracks().forEach(track => track.stop());
-                         audioStream = null; // Release the stream
-                    }
-                };
-
-                mediaRecorder.onerror = (event) => {
-                    console.error("MediaRecorder error:", event.error);
-                    statusDiv.textContent = `Recording Error: ${event.error.name}`;
-                    startButton.disabled = false;
-                    stopButton.disabled = true;
-                     if (audioStream) {
-                        audioStream.getTracks().forEach(track => track.stop());
-                        audioStream = null; // Clean up stream on error too
-                    }
-                };
-
-                // Start recording. Pass timeslice in ms to trigger ondataavailable periodically (e.g., every second)
-                // This can sometimes help ensure data is collected, especially for short recordings.
-                mediaRecorder.start(1000); // Trigger ondataavailable every 1000ms (1 second)
-                // If using timeslice causes issues, revert to: mediaRecorder.start();
-
-                statusDiv.textContent = 'Recording... Press "Stop Recording" to finish.';
-
-            } catch (err) {
-                console.error("Error accessing microphone:", err);
-                statusDiv.textContent = `Error: ${err.name}. Please grant microphone permission.`;
-                 startButton.disabled = false; // Re-enable start if permission fails
-                 stopButton.disabled = true;
-            }
-        };
-
-        stopButton.onclick = () => {
-            if (mediaRecorder && mediaRecorder.state === 'recording') {
-                console.log("Stop button clicked. Stopping recorder..."); // <-- DEBUG ADDED
-                mediaRecorder.stop();
-                // UI update (disable stop, enable start) will happen in onstop or onerror
-                startButton.disabled = false; // Enable Start button immediately
-                stopButton.disabled = true;  // Disable Stop button immediately
-            } else {
-                 console.warn("Stop clicked but recorder not active or doesn't exist."); // <-- DEBUG ADDED
-            }
-        };
-
-        async function sendAudioToServer(audioBlob) {
-             console.log(`Sending audio blob (size: ${audioBlob.size}) to server...`); // <-- DEBUG ADDED
-            const formData = new FormData();
-            const fileExtension = (mediaRecorder.mimeType || 'audio/webm').split('/')[1].split(';')[0];
-            formData.append('file', audioBlob, `recorded_audio.${fileExtension}`);
-
-            try {
-                // Use fetch to send to the new endpoint
-                const response = await fetch('/transcribe_record', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                // ... (rest of the fetch handling remains the same) ...
-
-                 if (response.ok) {
-                    const result = await response.json();
-                    if (result.transcript) {
-                         recordingTranscriptTextarea.value = result.transcript;
-                         statusDiv.textContent = 'Transcription complete. Ready to record again.';
-                    } else if (result.error) {
-                        recordingTranscriptTextarea.value = `Server Error: ${result.error}`;
-                        statusDiv.textContent = 'Error during transcription.';
-                    } else {
-                         recordingTranscriptTextarea.value = 'Received empty response from server.';
-                         statusDiv.textContent = 'Error: Empty response.';
-                    }
-                } else {
-                    // Handle HTTP errors (e.g., 404, 500)
-                    const errorText = await response.text();
-                    console.error('Server error:', response.status, errorText);
-                    recordingTranscriptTextarea.value = `Server Error: ${response.status} ${response.statusText}. ${errorText}`;
-                    statusDiv.textContent = 'Server error during transcription.';
-                }
-            } catch (error) {
-                console.error('Network or fetch error:', error);
-                recordingTranscriptTextarea.value = `Network Error: ${error.message}`;
-                statusDiv.textContent = 'Network error. Could not reach server.';
-            } finally {
-                 startButton.disabled = false; // Ensure start is enabled after processing attempt
-                 stopButton.disabled = true; // Ensure stop is disabled
-            }
-        }
-
-    </script>
+    <script src="/static/script.js"></script>
 </body>
 </html>

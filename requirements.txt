@@ -1,3 +1,6 @@
+flask
+openai-whisper
 RealtimeTTS
-fastapi
-uvicorn
+requests
+google-generativeai
+python-dotenv
