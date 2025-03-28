@@ -122,7 +122,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- NEW: Gemini Processing Logic ---
     async function processTranscriptWithGemini(textToProcess) {
         if (!textToProcess) {
             setStatus("Cannot process empty transcript.", true);
