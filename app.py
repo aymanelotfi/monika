@@ -263,7 +263,7 @@ def index():
 @app.route("/transcribe", methods=["POST"])
 def transcribe_audio():
     """Handles audio file upload, transcribes using Whisper."""
-    app.logger.info(f"Fuck off")
+    # app.logger.info(f"Fuck off")
     time_0 = datetime.now()
     if not whisper_model:
         app.logger.info("Transcription request failed: Whisper model not loaded.")

@@ -70,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 recordedAudioPlayback.src = audioUrl; recordedAudioPlayback.hidden = false;
                 // --> Change: Now calls transcription, which then calls Gemini processing
                 sendAudioForTranscription(currentAudioBlob);
+
                 startButton.disabled = false; stopButton.disabled = true; // Reset buttons after blob created
             };
             mediaRecorder.onerror = (event) => { setStatus(`Recording Error: ${event.error.name}`, true); console.error("MediaRecorder error:", event.error); if (audioStream) { audioStream.getTracks().forEach(track => track.stop()); audioStream = null; } startButton.disabled = false; stopButton.disabled = true; disableSpeakButton(); };
@@ -107,8 +108,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 rawTranscript = result.transcript; // Store the raw transcript
                 setStatus('Transcription complete. Processing with Gemini...');
                 console.log("Raw transcript:", rawTranscript);
-                // --> NEW: Call Gemini processing function
-                processTranscriptWithGemini(rawTranscript);
+                processTranscriptWithGemini(rawTranscript).then(() => {
+                    requestAndPlayTTS(transcriptOutput.value.trim());
+                });
             } else {
                 throw new Error("Server response missing 'transcript' field.");
             }
@@ -191,7 +193,70 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     };
 
-     // --- Initial Setup (Keep as before) ---
+    async function requestAndPlayTTS(textToSpeak) {
+        if (!textToSpeak) {
+            setTtsStatus('Nothing to speak.', true);
+            return;
+        }
+
+        setTtsStatus('Synthesizing speech...');
+        ttsAudioOutput.removeAttribute('src'); // Clear previous audio
+        ttsAudioOutput.load();
+
+        const ttsUrl = `/tts?text=${encodeURIComponent(textToSpeak)}`;
+        console.log(`Requesting TTS from: ${ttsUrl}`);
+
+        // Set the audio source. The browser starts fetching the stream.
+        ttsAudioOutput.src = ttsUrl;
+
+        // --- Attempt Autoplay ---
+        // We call play() immediately after setting the src.
+        // This returns a Promise that resolves if playback starts,
+        // and rejects if it's blocked.
+        const playPromise = ttsAudioOutput.play();
+
+        if (playPromise !== undefined) {
+            playPromise.then(_ => {
+                // Autoplay started successfully!
+                setTtsStatus('Autoplaying synthesized speech...');
+                console.log("TTS autoplay initiated successfully.");
+            }).catch(error => {
+                // Autoplay was prevented.
+                console.error("TTS autoplay failed:", error);
+                setTtsStatus('Audio ready. Press play on the player above.', false); // Inform user
+                // Optional: You could visually highlight the play button on the audio element here.
+            });
+        } else {
+             // In some older browser scenarios, .play() might not return a promise.
+             // Assume playback might start, but provide controls as fallback.
+             setTtsStatus("Audio requested. Use player controls if needed.");
+        }
+
+
+        // --- Event listeners for the TTS audio element (Keep these) ---
+        ttsAudioOutput.onplaying = () => {
+            // Update status only if it wasn't already set by the promise resolution
+            if (!ttsStatusDiv.textContent.includes('Autoplaying')) {
+                 setTtsStatus('Speaking...');
+            }
+            console.log("TTS audio playback started (onplaying event).");
+        };
+
+        ttsAudioOutput.onended = () => {
+            setTtsStatus('Speech finished.');
+            console.log("TTS audio playback finished.");
+            // No need to re-enable speak button as it's removed
+        };
+
+        ttsAudioOutput.onerror = (e) => {
+            // Use the existing error handling for playback errors
+            setTtsStatus('Error playing synthesized speech.', true);
+            console.error('Error on TTS audio element:', ttsAudioOutput.error);
+            // (Keep the fetch fallback for detailed server errors)
+             fetch(ttsUrl).then(async response => { /* ... */ }).catch(fetchErr => console.error("Error fetching TTS URL directly:", fetchErr));
+        };
+    }
+
      recordedAudioPlayback.hidden = true;
      ttsAudioOutput.hidden = false;
 
