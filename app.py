@@ -54,13 +54,16 @@ TTS_ENGINE_NAME = "orpheus"  # Or other supported engines if added
 # --- Gemini Configuration ---  # <-- New Section
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 # Using 1.5 Flash as it's the latest fast model. Adjust if a specific "2.0 Flash" name becomes available.
-GEMINI_MODEL_NAME = "gemini-1.5-flash-latest"
+GEMINI_MODEL_NAME = "gemini-2.0-flash"
 # System prompt instructing Gemini
-GEMINI_SYSTEM_PROMPT = """You are processing text that will be spoken aloud by a Text-to-Speech (TTS) model called Orpheus.
+GEMINI_SYSTEM_PROMPT = """You are processing text that will be spoken aloud by a Text-to-Speech (TTS) model.
 Refine or respond to the user's text naturally, as if you were speaking.
-You can use the following emotive tags to add expressiveness to the TTS output: <laugh>, <chuckle>, <sigh>, <cough>, <sniffle>, <groan>, <yawn>, <gasp>.
+You can use the following emotive tags to add expressiveness to the TTS output: <laugh>, <cough>, <sniffle>, <groan>, <yawn>, <gasp>.
 Use these tags sparingly and only where appropriate to make the speech sound more natural. Do not explain the tags, just use them within the text.
-Keep the response concise and relevant to the user's input."""
+Keep the response concise and relevant to the user's input.
+Do not use the tags at the beginning of a sentence.
+Use a lot of emotionals tags in the text, but do not overuse them. Use them only when it makes sense.
+"""
 
 # Configure the Gemini client (do this once at startup)
 if GEMINI_API_KEY:
@@ -117,13 +120,10 @@ try:
     app.logger.info(f"Initializing TTS Engine: {TTS_ENGINE_NAME}")
     if TTS_ENGINE_NAME == "orpheus":
         tts_engine = OrpheusEngine()
-        # Add setup for other engines if needed here
     else:
         raise ValueError(f"Unsupported TTS engine: {TTS_ENGINE_NAME}")
 
-    tts_stream = TextToAudioStream(
-        tts_engine, muted=True
-    )  # Muted because we stream to client
+    tts_stream = TextToAudioStream(tts_engine, muted=True)
     app.logger.info(f"TTS Engine {TTS_ENGINE_NAME} initialized.")
 
 except Exception as e:
@@ -175,41 +175,60 @@ def create_wave_header_for_engine(engine):  # Same as FastAPI version
 
 
 def play_text_to_speech_task(
+    app_instance,  # Pass the app instance to create context
     stream: TextToAudioStream,
     text: str,
     audio_queue: Queue,
     semaphore: threading.Semaphore,
 ):
     """Background task to perform TTS synthesis and queue audio chunks."""
-    instance_id = str(uuid.uuid4())[:8]
-    app.logger.info(
-        f'[{instance_id}] Starting TTS synthesis background task for: "{text[:50]}..."'
-    )
-
-    def on_audio_chunk(chunk):
-        # This function is called by RealtimeTTS when an audio chunk is ready
-        app.logger.debug(f"[{instance_id}] Received TTS chunk, adding to queue.")
-        audio_queue.put(chunk)
-
-    try:
-        if not stream:
-            raise ValueError("TTS Stream not initialized")
-        stream.feed(text)
-        app.logger.debug(f"[{instance_id}] Calling stream.play() (blocking).")
-        # stream.play is blocking until synthesis is complete or interrupted.
-        stream.play(on_audio_chunk=on_audio_chunk, muted=True)
-        app.logger.info(f"[{instance_id}] TTS synthesis complete in background task.")
-        audio_queue.put(None)  # Use None as a sentinel to signal the end of audio
-    except Exception as e:
-        app.logger.error(
-            f"[{instance_id}] Error during TTS processing in background task: {e}",
-            exc_info=True,
+    # --- Use app.app_context() to make app.logger work ---
+    with app_instance.app_context():
+        instance_id = str(uuid.uuid4())[:8]
+        # Now app.logger (or current_app.logger) should work correctly
+        app.logger.debug(  # Using app is often preferred inside context
+            f'[{instance_id}] Starting TTS synthesis background task for: "{text[:200]}..."'
         )
-        audio_queue.put(None)  # Ensure the generator stops even on error
-    finally:
-        # CRITICAL: Release the semaphore so other requests can proceed
-        semaphore.release()
-        app.logger.debug(f"[{instance_id}] Released TTS semaphore.")
+
+        first_chunk_time = None  # For debugging first chunk latency
+
+        def on_audio_chunk(chunk):
+            nonlocal first_chunk_time
+            if first_chunk_time is None:
+                first_chunk_time = datetime.now()
+                # Use app.logger here too if needed
+                app.logger.debug(
+                    f"[{instance_id}] First TTS chunk received at {first_chunk_time}"
+                )
+            audio_queue.put(chunk)
+
+        try:
+            if not stream:
+                raise ValueError("TTS Stream not initialized")
+
+            stream.feed(text)
+            play_start_time = datetime.now()
+            app.logger.debug(
+                f"[{instance_id}] Calling stream.play() at {play_start_time} (blocking)."
+            )
+
+            # Make sure the 'muted' parameter is set if you don't want server sound
+            stream.play(on_audio_chunk=on_audio_chunk, muted=True)
+
+            app.logger.info(
+                f"[{instance_id}] TTS synthesis complete in background task."
+            )
+            audio_queue.put(None)
+        except Exception as e:
+            app.logger.error(
+                f"[{instance_id}] Error during TTS processing in background task: {e}",
+                exc_info=True,  # Include traceback in log
+            )
+            audio_queue.put(None)
+        finally:
+            # CRITICAL: Release the semaphore
+            semaphore.release()
+            app.logger.debug(f"[{instance_id}] Released TTS semaphore.")
 
 
 def tts_audio_stream_generator(audio_queue: Queue):
@@ -234,7 +253,7 @@ def tts_audio_stream_generator(audio_queue: Queue):
                 yield header
             header_sent = True  # Don't send header again
 
-        app.logger.debug(f"Flask TTS generator yielding audio chunk size {len(chunk)}.")
+        # app.logger.debug(f"Flask TTS generator yielding audio chunk size {len(chunk)}.")
         yield chunk
 
     app.logger.debug("Flask TTS audio generator finished.")
@@ -360,6 +379,7 @@ def gemini_process_text():
         # Extract the text from the response
         # Handle potential blocks or safety issues if needed
         processed_text = response.text
+        processed_text = processed_text.replace("<", ",<")
         app.logger.info(f"Gemini processed text: '{processed_text[:100]}...'")
 
         return jsonify({"processed_text": processed_text})
@@ -385,7 +405,7 @@ def text_to_speech():
         app.logger.error("TTS request failed: TTS Engine or Stream not initialized.")
         return jsonify({"error": "Text-to-Speech service unavailable."}), 503
 
-    app.logger.info(f'Received TTS request for text: "{text[:50]}..."')
+    app.logger.info(f'Received TTS request for text: "{text[:200]}..."')
 
     # Try to acquire the semaphore without blocking
     if play_text_to_speech_semaphore.acquire(blocking=False):
@@ -393,7 +413,13 @@ def text_to_speech():
         # The background task will put data into the shared tts_audio_queue
         threading.Thread(
             target=play_text_to_speech_task,
-            args=(tts_stream, text, tts_audio_queue, play_text_to_speech_semaphore),
+            args=(
+                app,
+                tts_stream,
+                text,
+                tts_audio_queue,
+                play_text_to_speech_semaphore,
+            ),
             daemon=True,  # Allows app to exit even if thread hangs (use carefully)
         ).start()
 
@@ -435,5 +461,4 @@ if __name__ == "__main__":
     if not tts_engine:
         print("WARNING: TTS engine failed to load. Speech synthesis will not work.")
 
-    # Use host='0.0.0.0' to make it accessible on your network
     app.run(port=APP_PORT, debug=True)

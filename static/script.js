@@ -1,262 +1,291 @@
+// Ensure ONNX Runtime and VAD are loaded first (due to CDN scripts in HTML)
 document.addEventListener('DOMContentLoaded', () => {
-    // --- DOM Elements (Keep as before) ---
-    const startButton = document.getElementById('startButton');
-    const stopButton = document.getElementById('stopButton');
+
+    // --- DOM Elements ---
     const statusDiv = document.getElementById('status');
-    const recordedAudioPlayback = document.getElementById('recordedAudioPlayback');
-    const transcriptOutput = document.getElementById('transcriptOutput'); // Will show final processed text
-    const speakButton = document.getElementById('speakButton');
+    const transcriptOutput = document.getElementById('transcriptOutput'); // Shows Gemini/Assistant text
     const ttsStatusDiv = document.getElementById('ttsStatus');
     const ttsAudioOutput = document.getElementById('ttsAudioOutput');
+    ttsAudioOutput.playbackRate = 1.5;
+    ttsAudioOutput.volume = 1.0;
+    const recordedAudioPlayback = document.getElementById('recordedAudioPlayback'); // For debugging user audio
+    const stopConv = document.getElementById('stopConv'); // Optional stop button
+    // --- State Variables ---
+    let vad_web; // VAD processor instance (from vad_web global)
+    let isVadReady = false; // Flag indicating VAD models are loaded
+    let isListening = false; // Flag indicating VAD is actively processing audio
+    let isSpeaking = false; // Flag from VAD callback indicating speech detected
+    let rawTranscript = ''; // Stores raw transcript before Gemini
+    const targetSampleRate = 16000; // Target sample rate (VAD model expects 16k)
 
-    // --- State Variables (Keep as before) ---
-    let mediaRecorder;
-    let audioChunks = [];
-    let audioStream;
-    let currentAudioBlob = null;
-    let rawTranscript = ''; // Store raw transcript before Gemini processing
-
-    // --- Check Browser Support (Keep as before) ---
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setStatus('Error: getUserMedia not supported on your browser!', true);
-        disableRecordingButtons(); disableSpeakButton(); return;
-    }
-
-    // --- Helper Functions (Keep setStatus, setTtsStatus, etc. as before) ---
-     function setStatus(message, isError = false) {
+    // --- Helper Functions ---
+    function setStatus(message, type = 'idle') { // types: idle, listening, speaking, processing, error
         statusDiv.textContent = message;
-        statusDiv.className = isError ? 'error' : '';
-        console.log(`Status: ${message}`);
+        statusDiv.className = `status ${type}`; // Update class for styling
+        console.log(`Status [${type}]: ${message}`);
     }
-    function setTtsStatus(message, isError = false) { /* ... keep as before ... */ }
-    function disableRecordingButtons() { /* ... keep as before ... */ }
-    function disableSpeakButton() { /* ... keep as before ... */ }
+    function setTtsStatus(message, isError = false) {
+        ttsStatusDiv.textContent = message;
+        // Optionally add error class styling for ttsStatusDiv too
+        console.log(`TTS Status: ${message}`);
+    }
     function clearPreviousRun() {
-        transcriptOutput.value = ''; // Clear output area
-        rawTranscript = ''; // Clear stored transcript
-        recordedAudioPlayback.removeAttribute('src');
-        recordedAudioPlayback.load();
-        ttsAudioOutput.removeAttribute('src');
-        ttsAudioOutput.load();
-        disableSpeakButton();
-        currentAudioBlob = null;
-        setStatus("Press 'Start Recording'");
-        setTtsStatus("Ready for processed text.");
+        transcriptOutput.value = ''; rawTranscript = '';
+        ttsAudioOutput.removeAttribute('src'); ttsAudioOutput.load();
+        recordedAudioPlayback.removeAttribute('src'); recordedAudioPlayback.load();
+        setTtsStatus("");
+    }
+
+    // --- Core VAD and Audio Processing ---
+
+    async function initializeVAD() {
+        setStatus("Initializing VAD...", 'processing');
+        try {
+            // Use the global `vad_web` provided by the CDN script
+            // Ensure ort is loaded first (it should be if CDN order is correct)
+            if (typeof ort === 'undefined') {
+                 throw new Error("ONNX Runtime (ort) not loaded. Check CDN script order/URL.");
+            }
+            if (typeof vad === 'undefined') {
+                throw new Error("VAD library (vad) not loaded. Check CDN script order/URL.");
+            }
+
+            vad_web = await vad.MicVAD.new({
+                // Provide ort object explicitly if needed by the library version
+                 ort: ort, // Pass the loaded ONNX runtime
+
+                // Model URL (Using jsdelivr CDN for Silero VAD model)
+                modelURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.22/dist/bundle.min.js",
+                // ONNX runtime worker URL (improves performance)
+                ortURL: "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.js",
+                
+                onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/",
+
+
+                // VAD Thresholds (--- TUNE THESE VALUES ---)
+                positiveSpeechThreshold: 0.6, // Confidence threshold to trigger start
+                negativeSpeechThreshold: 0.45, // Confidence below this stops speech
+                minSilenceFrames: 6,  // How many silent frames confirm end (e.g., ~180ms at 16kHz/32ms frames)
+                // Adjust based on how quickly you want it to stop after speech
+                // Smaller = faster stop, Larger = more pause tolerance
+                // Sampling Rate (must match model)
+                samplingRate: targetSampleRate,
+
+                // Callbacks
+                onSpeechStart: () => {
+                    if (!isListening) return; // Ignore if not actively listening
+                    isSpeaking = true;
+                    // Note: MicVAD handles internal buffering, we don't need audioBuffer here
+                    setStatus("Speech detected...", 'speaking');
+                },
+                onSpeechEnd: (audio) => { // `audio` is the Float32Array of the detected speech segment
+                     if (!isListening || !isSpeaking) return; // Ignore if VAD misfire or wasn't actively listening
+                    isSpeaking = false; // Reset speaking flag for next utterance
+                    setStatus("Processing speech...", 'processing');
+                    console.log(`Speech ended. VAD provided audio data length: ${audio.length}`);
+
+                    // --- Encode the received Float32Array to WAV Blob ---
+                     if (audio && audio.length > 0) {
+                        // Ensure sampleRate used for encoding matches VAD's rate
+                        const wavBlob = encodeWAV(audio, targetSampleRate);
+                        console.log(`Encoded WAV Blob size: ${wavBlob.size}`);
+
+                        // --- Optional: Play back the captured audio for debugging ---
+                         // const audioUrl = URL.createObjectURL(wavBlob);
+                         // recordedAudioPlayback.src = audioUrl;
+                         // recordedAudioPlayback.style.display = 'block'; // Show player
+                         // recordedAudioPlayback.play();
+
+                        // --- Send for Transcription ---
+                        sendAudioForTranscription(wavBlob);
+
+                        // --- Important: Stop listening while processing ---
+                        // Prevents immediate re-triggering if TTS starts quickly
+                        stopListeningTemporarily();
+
+                    } else {
+                        console.warn("onSpeechEnd called but audio data is empty or invalid.");
+                        // If listening should continue, reset status
+                         if (isListening) setStatus("Listening...", 'listening');
+                    }
+                },
+                 onVADMisfire: () => { // Optional but useful feedback
+                    console.log("VAD misfire detected (triggered but likely not speech)");
+                    // Reset status if needed, maybe ignore brief misfires
+                    if (isListening && !isSpeaking) { // Only reset if not currently in a speaking state
+                         setStatus("Listening...", 'listening');
+                    }
+                 }
+            });
+
+            if (!vad_web) { throw new Error("VAD creation failed."); }
+
+            // --- Microphone Permission ---
+            // MicVAD requires the stream to be passed if not using its internal mic handling
+            // Let's try letting MicVAD handle the mic stream directly for simplicity
+            // It should request permission when vad.start() is called if needed.
+
+            isVadReady = true;
+            setStatus("Ready. Speak when status shows 'Listening...'", 'idle');
+            // --- Start listening automatically after initialization ---
+            startListening();
+
+        } catch (error) {
+            console.error("Failed to initialize VAD:", error);
+            setStatus(`VAD Initialization Error: ${error.message}`, 'error');
+            isVadReady = false;
+        }
+    }
+
+    function startListening() {
+        if (!isVadReady) {
+            setStatus("VAD not ready.", 'error');
+            console.error("Attempted to start listening but VAD is not ready.");
+             // Maybe attempt re-initialization after a delay
+            return;
+        }
+        if (isListening) {
+            console.warn("Already listening.");
+            return;
+        }
+        try {
+            // Start VAD processing (this should also request mic permission if not granted)
+            vad_web.start();
+            isListening = true;
+            setStatus("Listening...", 'listening');
+        } catch (error) {
+            console.error("Error starting VAD listening:", error);
+            setStatus(`Mic/VAD Start Error: ${error.message}`, 'error');
+            isListening = false;
+        }
+    }
+
+    function stopListeningTemporarily() {
+        // Used to pause VAD while backend is processing
+        if (!isVadReady || !isListening) {
+            return; // Nothing to stop
+        }
+        vad_web.pause(); // Pause VAD processing
+        isListening = false;
+        // Status is usually 'Processing...' at this point, so don't change it to 'Idle'
+        console.log("VAD paused while processing.");
+    }
+
+    function stopListeningPermanently() {
+         // Could be called by a hypothetical "End Conversation" button
+        if (!isVadReady) return;
+        vad_web.destroy(); // Release resources
+        isListening = false;
+        isSpeaking = false;
+        isVadReady = false; // Mark as not ready
+        setStatus("VAD stopped.", 'idle');
+        console.log("VAD destroyed.");
     }
 
 
-    // --- Recording Logic (Keep startButton.onclick, stopButton.onclick, etc. as before) ---
-    startButton.onclick = async () => {
-        clearPreviousRun();
-        setStatus('Requesting microphone access...');
-        disableRecordingButtons();
-        try {
-            audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            setStatus('Microphone access granted. Initializing recorder...');
-            startButton.disabled = true; stopButton.disabled = false; audioChunks = [];
-            const mimeTypes = [ 'audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4', 'audio/wav' ];
-            let supportedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
-            console.log(`Using MIME type: ${supportedMimeType || 'browser default'}`);
-            mediaRecorder = new MediaRecorder(audioStream, { mimeType: supportedMimeType });
-            mediaRecorder.ondataavailable = event => { if (event.data.size > 0) audioChunks.push(event.data); };
-            mediaRecorder.onstop = () => {
-                setStatus('Recording stopped. Processing...');
-                console.log("MediaRecorder stopped. Chunks collected:", audioChunks.length);
-                 if (audioStream) { audioStream.getTracks().forEach(track => track.stop()); audioStream = null; console.log("Microphone stream stopped."); }
-                if (!audioChunks || audioChunks.length === 0) { setStatus('Error: No audio data collected.', true); console.error("No audio chunks collected."); startButton.disabled = false; stopButton.disabled = true; return; }
-                currentAudioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-                console.log(`Audio Blob created. Size: ${currentAudioBlob.size}, Type: ${currentAudioBlob.type}`);
-                const audioUrl = URL.createObjectURL(currentAudioBlob);
-                recordedAudioPlayback.src = audioUrl; recordedAudioPlayback.hidden = false;
-                // --> Change: Now calls transcription, which then calls Gemini processing
-                sendAudioForTranscription(currentAudioBlob);
+    // --- Transcription, Gemini, TTS (Largely the same, ensure they call startListening on completion/error) ---
 
-                startButton.disabled = false; stopButton.disabled = true; // Reset buttons after blob created
-            };
-            mediaRecorder.onerror = (event) => { setStatus(`Recording Error: ${event.error.name}`, true); console.error("MediaRecorder error:", event.error); if (audioStream) { audioStream.getTracks().forEach(track => track.stop()); audioStream = null; } startButton.disabled = false; stopButton.disabled = true; disableSpeakButton(); };
-            mediaRecorder.start(1000);
-            setStatus('Recording... Press "Stop Recording" to finish.');
-        } catch (err) { setStatus(`Error: ${err.name}. Could not access microphone.`, true); console.error("Error accessing microphone:", err); startButton.disabled = false; stopButton.disabled = true; disableSpeakButton(); }
-    };
-    stopButton.onclick = () => { if (mediaRecorder && mediaRecorder.state === 'recording') { setStatus('Stopping recording...'); mediaRecorder.stop(); } else { console.warn("Stop clicked but recorder not active."); } };
-
-
-    // --- Transcription Logic (Modified) ---
     async function sendAudioForTranscription(audioBlob) {
-        setStatus('Transcribing audio...');
-        speakButton.disabled = true;
-        transcriptOutput.value = ''; // Clear previous output
-        rawTranscript = ''; // Clear previous raw transcript
-
+        setStatus('Transcribing audio...', 'processing');
+        transcriptOutput.value = ''; rawTranscript = ''; // Clear previous results
         const formData = new FormData();
-        let fileExtension = (audioBlob.type || 'audio/webm').split('/')[1].split(';')[0];
-        const allowedExtensions = ['webm', 'ogg', 'wav', 'mp3', 'mp4', 'm4a', 'flac', 'mpeg'];
-        if (!allowedExtensions.includes(fileExtension)) fileExtension = 'webm';
-        formData.append('file', audioBlob, `recording.${fileExtension}`);
-
-        console.log(`Sending audio (size: ${audioBlob.size}) to /transcribe endpoint.`);
-
+        formData.append('file', audioBlob, `vad_recording.wav`); // Use WAV extension
+        console.log(`Sending VAD audio blob (size: ${audioBlob.size}) to /transcribe endpoint.`);
         try {
             const response = await fetch('/transcribe', { method: 'POST', body: formData });
-            if (!response.ok) { // Handle HTTP errors first
-                 let errorDetail = `HTTP Error: ${response.status} ${response.statusText}`;
-                 try { const errorJson = await response.json(); errorDetail = errorJson.detail || errorJson.error || errorDetail; } catch (e) {}
-                 throw new Error(errorDetail);
-            }
+            if (!response.ok) { let e = await response.json(); throw new Error(e.error || `HTTP ${response.status}`);}
             const result = await response.json();
             if (result.transcript !== undefined) {
-                rawTranscript = result.transcript; // Store the raw transcript
-                setStatus('Transcription complete. Processing with Gemini...');
+                rawTranscript = result.transcript;
+                setStatus('Transcription complete. Processing with Gemini...', 'processing');
                 console.log("Raw transcript:", rawTranscript);
-                processTranscriptWithGemini(rawTranscript).then(() => {
-                    requestAndPlayTTS(transcriptOutput.value.trim());
-                });
-            } else {
-                throw new Error("Server response missing 'transcript' field.");
-            }
+                processTranscriptWithGemini(rawTranscript); // Call Gemini
+            } else { throw new Error("Missing transcript"); }
         } catch (error) {
-            setStatus(`Transcription failed: ${error.message}`, true);
+            setStatus(`Transcription failed: ${error.message}`, 'error');
             console.error('Error during transcription fetch:', error);
-            transcriptOutput.value = `Transcription Error: ${error.message}`;
-            disableSpeakButton();
+            setTimeout(startListening, 2000); // Restart listening after error
         }
     }
 
     async function processTranscriptWithGemini(textToProcess) {
-        if (!textToProcess) {
-            setStatus("Cannot process empty transcript.", true);
-            return;
-        }
-        setStatus("Sending text to Gemini for processing...");
+        if (!textToProcess) { setTimeout(startListening, 1000); return; } // Restart if empty
+        setStatus("Sending text to Gemini for processing...", 'processing');
         console.log("Sending to /gemini_process:", textToProcess);
-
         try {
-            const response = await fetch('/gemini_process', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: textToProcess })
-            });
-
-            if (!response.ok) { // Handle HTTP errors first
-                let errorDetail = `HTTP Error: ${response.status} ${response.statusText}`;
-                try { const errorJson = await response.json(); errorDetail = errorJson.detail || errorJson.error || errorDetail; } catch (e) {}
-                throw new Error(errorDetail);
-            }
-
+            const response = await fetch('/gemini_process', { /* ... (POST JSON as before) ... */
+                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: textToProcess })
+             });
+            if (!response.ok) { let e = await response.json(); throw new Error(e.error || `HTTP ${response.status}`);}
             const result = await response.json();
             if (result.processed_text !== undefined) {
                 const processedText = result.processed_text;
-                transcriptOutput.value = processedText; // Display final processed text
-                setStatus('Gemini processing complete. Ready to speak.');
-                speakButton.disabled = !processedText; // Enable speak button if text exists
+                transcriptOutput.value = processedText;
+                setStatus('Gemini processing complete. Synthesizing Speech...', 'processing');
                 console.log("Gemini processed text:", processedText);
-            } else if (result.error) {
-                 throw new Error(`Gemini Error: ${result.error}`);
-            }
-            else {
-                 throw new Error("Server response missing 'processed_text' field.");
-            }
-
+                requestAndPlayTTS(processedText); // Request TTS
+            } else if (result.error) { throw new Error(result.error); }
+            else { throw new Error("Missing processed_text"); }
         } catch (error) {
-             setStatus(`Gemini processing failed: ${error.message}`, true);
+             setStatus(`Gemini processing failed: ${error.message}`, 'error');
              console.error('Error during Gemini processing fetch:', error);
-             transcriptOutput.value = `Gemini Processing Error: ${error.message}\n\n(Raw transcript was: ${rawTranscript})`; // Show error and raw text
-             disableSpeakButton();
+             transcriptOutput.value = `Gemini Error: ${error.message}\n\n(Raw: ${rawTranscript})`;
+             setTimeout(startListening, 2000); // Restart listening after error
         }
     }
 
-
-    // --- Text-to-Speech Logic (Keep as before) ---
-    // This function now uses the text from transcriptOutput, which is the Gemini-processed text
-    speakButton.onclick = () => {
-        const textToSpeak = transcriptOutput.value.trim(); // Text IS the processed one
-        if (!textToSpeak) { setTtsStatus('Nothing to speak.', true); return; }
-
+    function requestAndPlayTTS(textToSpeak) {
+        // Autoplay logic remains the same
+        if (!textToSpeak) { setTtsStatus('Nothing to speak.', true); setTimeout(startListening, 1000); return; }
         setTtsStatus('Synthesizing speech...');
-        speakButton.disabled = true;
         ttsAudioOutput.removeAttribute('src'); ttsAudioOutput.load();
         const ttsUrl = `/tts?text=${encodeURIComponent(textToSpeak)}`;
         console.log(`Requesting TTS from: ${ttsUrl}`);
         ttsAudioOutput.src = ttsUrl;
-        ttsAudioOutput.play().catch(e => { console.warn("Autoplay failed:", e.message); setTtsStatus("Audio ready. Press play.", false); });
 
-        ttsAudioOutput.onplaying = () => { setTtsStatus('Speaking...'); console.log("TTS playback started."); };
-        ttsAudioOutput.onended = () => { setTtsStatus('Speech finished.'); speakButton.disabled = !transcriptOutput.value.trim(); console.log("TTS playback finished."); };
-        ttsAudioOutput.onerror = (e) => {
-            setTtsStatus('Error playing synthesized speech.', true);
-            speakButton.disabled = !transcriptOutput.value.trim();
-            console.error('Error on TTS audio element:', ttsAudioOutput.error);
-             fetch(ttsUrl).then(async response => { // Attempt to get server error
-                 if (!response.ok) { let detail = `Server error: ${response.status}`; try { const errJson = await response.json(); detail = errJson.detail || errJson.error || detail; } catch(e){} console.error(`Detailed server error: ${detail}`); setTtsStatus(`TTS Fetch Error: ${detail}`, true); }
-             }).catch(fetchErr => console.error("Error fetching TTS URL directly:", fetchErr));
-        };
-    };
-
-    async function requestAndPlayTTS(textToSpeak) {
-        if (!textToSpeak) {
-            setTtsStatus('Nothing to speak.', true);
-            return;
-        }
-
-        setTtsStatus('Synthesizing speech...');
-        ttsAudioOutput.removeAttribute('src'); // Clear previous audio
-        ttsAudioOutput.load();
-
-        const ttsUrl = `/tts?text=${encodeURIComponent(textToSpeak)}`;
-        console.log(`Requesting TTS from: ${ttsUrl}`);
-
-        // Set the audio source. The browser starts fetching the stream.
-        ttsAudioOutput.src = ttsUrl;
-
-        // --- Attempt Autoplay ---
-        // We call play() immediately after setting the src.
-        // This returns a Promise that resolves if playback starts,
-        // and rejects if it's blocked.
         const playPromise = ttsAudioOutput.play();
-
         if (playPromise !== undefined) {
-            playPromise.then(_ => {
-                // Autoplay started successfully!
-                setTtsStatus('Autoplaying synthesized speech...');
-                console.log("TTS autoplay initiated successfully.");
-            }).catch(error => {
-                // Autoplay was prevented.
-                console.error("TTS autoplay failed:", error);
-                setTtsStatus('Audio ready. Press play on the player above.', false); // Inform user
-                // Optional: You could visually highlight the play button on the audio element here.
-            });
-        } else {
-             // In some older browser scenarios, .play() might not return a promise.
-             // Assume playback might start, but provide controls as fallback.
-             setTtsStatus("Audio requested. Use player controls if needed.");
-        }
+            playPromise.then(_ => { setTtsStatus('Speaking...'); console.log("TTS autoplay started."); })
+                       .catch(error => { console.error("TTS autoplay failed:", error); setTtsStatus('Audio ready. Press play.', false); setTimeout(startListening, 1000); }); // Start listening even if autoplay fails
+        } else { setTtsStatus("Audio requested."); setTimeout(startListening, 1000); } // Start listening as fallback
 
-
-        // --- Event listeners for the TTS audio element (Keep these) ---
-        ttsAudioOutput.onplaying = () => {
-            // Update status only if it wasn't already set by the promise resolution
-            if (!ttsStatusDiv.textContent.includes('Autoplaying')) {
-                 setTtsStatus('Speaking...');
-            }
-            console.log("TTS audio playback started (onplaying event).");
-        };
-
+        ttsAudioOutput.onplaying = () => { if (!ttsStatusDiv.textContent.includes('Speaking')) setTtsStatus('Speaking...'); console.log("TTS playback started."); };
         ttsAudioOutput.onended = () => {
-            setTtsStatus('Speech finished.');
-            console.log("TTS audio playback finished.");
-            // No need to re-enable speak button as it's removed
+             setTtsStatus('Speech finished.'); console.log("TTS playback finished.");
+             // --- Turn-Taking: Restart listening after TTS finishes ---
+             startListening(); 
         };
-
         ttsAudioOutput.onerror = (e) => {
-            // Use the existing error handling for playback errors
-            setTtsStatus('Error playing synthesized speech.', true);
-            console.error('Error on TTS audio element:', ttsAudioOutput.error);
-            // (Keep the fetch fallback for detailed server errors)
-             fetch(ttsUrl).then(async response => { /* ... */ }).catch(fetchErr => console.error("Error fetching TTS URL directly:", fetchErr));
+            setTtsStatus('Error playing synthesized speech.', true); console.error('Error on TTS audio element:', ttsAudioOutput.error);
+            setTimeout(startListening, 2000); // Restart listening on TTS error
         };
     }
+  
+    function stopConversation(){
+        stopListeningPermanently(); // Stop VAD and clear resources
+        setStatus("Conversation ended.", 'idle');
+        console.log("Conversation stopped.");
+    }
 
-     recordedAudioPlayback.hidden = true;
-     ttsAudioOutput.hidden = false;
+    stopConv.addEventListener('click', stopConversation); // Optional stop button
+
+    // --- WAV Encoding Helper --- (Crucial for sending VAD audio)
+    function encodeWAV(samples, sampleRate) {
+        const buffer = new ArrayBuffer(44 + samples.length * 2); // 44 bytes for header + 16-bit PCM
+        const view = new DataView(buffer);
+        writeString(view, 0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true); writeString(view, 8, 'WAVE');
+        writeString(view, 12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 1 * 2, true); view.setUint16(32, 1 * 2, true); view.setUint16(34, 16, true);
+        writeString(view, 36, 'data'); view.setUint32(40, samples.length * 2, true);
+        floatTo16BitPCM(view, 44, samples);
+        return new Blob([view], { type: 'audio/wav' });
+    }
+    function writeString(view, offset, string) { for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i)); }
+    function floatTo16BitPCM(output, offset, input) { for (let i = 0; i < input.length; i++, offset += 2) { const s = Math.max(-1, Math.min(1, input[i])); output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true); } }
+
+    // --- Initial Setup ---
+    setStatus("Initializing VAD...", 'processing'); // Initial status
+    // Initialize VAD when the page is ready
+    initializeVAD();
 
 }); // End DOMContentLoaded
