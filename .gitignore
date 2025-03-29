@@ -1,3 +1,5 @@
 whishper_data/*
 uploads/*
 env/
+.env
+__pycache__/

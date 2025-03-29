@@ -11,6 +11,8 @@ from datetime import datetime
 # Gemini Import
 import google.generativeai as genai
 
+from dotenv import load_dotenv
+
 # Flask imports
 from flask import (
     Flask,
@@ -28,6 +30,7 @@ from RealtimeTTS import OrpheusEngine, TextToAudioStream
 
 # --- Configuration ---
 # General App Config
+load_dotenv()  # Load environment variables from .env file
 APP_PORT = int(os.environ.get("APP_PORT", 5000))  # Default Flask port
 DEBUG_MODE = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
 UPLOAD_FOLDER = "./uploads"
@@ -35,7 +38,7 @@ UPLOAD_FOLDER = "./uploads"
 SECRET_KEY = os.environ.get("SECRET_KEY", "a-very-secret-development-key")
 
 # Whisper STT Config
-MODEL_SIZE = "base"  # Or "tiny", "small", "medium", "large"
+MODEL_SIZE = "tiny"  # Or "tiny", "small", "medium", "large"
 ALLOWED_EXTENSIONS = {
     "wav",
     "mp3",
@@ -58,7 +61,7 @@ GEMINI_MODEL_NAME = "gemini-2.0-flash"
 # System prompt instructing Gemini
 GEMINI_SYSTEM_PROMPT = """You are processing text that will be spoken aloud by a Text-to-Speech (TTS) model.
 Refine or respond to the user's text naturally, as if you were speaking.
-You can use the following emotive tags to add expressiveness to the TTS output: <laugh>, <cough>, <sniffle>, <groan>, <yawn>, <gasp>.
+You can use the following emotive tags to add expressiveness to the TTS output: <laugh>,<chuckle>,<cough>, <sniffle>, <groan>, <yawn>, <gasp>.
 Use these tags sparingly and only where appropriate to make the speech sound more natural. Do not explain the tags, just use them within the text.
 Keep the response concise and relevant to the user's input.
 Do not use the tags at the beginning of a sentence.
@@ -379,7 +382,6 @@ def gemini_process_text():
         # Extract the text from the response
         # Handle potential blocks or safety issues if needed
         processed_text = response.text
-        processed_text = processed_text.replace("<", ",<")
         app.logger.info(f"Gemini processed text: '{processed_text[:100]}...'")
 
         return jsonify({"processed_text": processed_text})
