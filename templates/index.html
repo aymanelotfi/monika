@@ -3,66 +3,107 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Whisper + Gemini + TTS Conversational (VAD)</title>
+    <title>Monika - Your AI assistant</title>
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <style>
-        /* Basic Styling (Keep or adapt your existing styles) */
-        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: auto; background-color: #f4f4f4; }
-        .container { background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1, h2 { text-align: center; color: #333; }
-        .section { margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+        /* Basic Styling */
+        body { font-family: system-ui, sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 20px auto; background-color: #121212; color: #e0e0e0; display: flex; justify-content: center; align-items: center; min-height: calc(100vh - 40px); }
+        .container { background: #1e1e1e; padding: 25px 35px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); display: flex; flex-direction: column; align-items: center; width: 100%; }
+        h1, h2 { text-align: center; color: #eee; font-weight: 500; }
+        h1 { margin-bottom: 25px; }
+        h2 { font-size: 1.1em; margin-bottom: 8px; color: #bbb; }
+        .section { margin-bottom: 25px; padding-bottom: 20px; border-bottom: 1px solid #333; width: 100%; }
         .section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-        textarea { width: 95%; min-height: 100px; margin-top: 10px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; display: block; margin-left: auto; margin-right: auto;}
-        audio { display: block; margin: 15px auto; max-width: 100%; }
-        #ttsStatus { text-align: center; margin: 10px 0; min-height: 1.2em; color: #555; }
+        textarea { width: 100%; box-sizing: border-box; min-height: 100px; margin-top: 5px; padding: 12px; border: 1px solid #444; border-radius: 8px; font-size: 1em; background-color: #282828; color: #e0e0e0; resize: vertical; }
+        audio { display: block; margin: 15px auto; max-width: 100%; border-radius: 25px; }
+        #ttsStatus { text-align: center; margin: 10px 0 0 0; min-height: 1.2em; color: #999; font-size: 0.9em; }
 
-        /* Status Div Styling */
-        .status { padding: 10px; margin-bottom: 15px; text-align: center; font-weight: bold; min-height: 1.5em; border-radius: 4px; transition: background-color 0.3s, color 0.3s; }
-        .status.idle { background-color: #eee; color: #555; }
-        .status.listening { background-color: #e0f7fa; color: #00796b; }
-        .status.speaking { background-color: #fff9c4; color: #f57f17; }
-        .status.processing { background-color: #ede7f6; color: #5e35b1; }
-        .status.error { background-color: #ffebee; color: #c62828; }
+        /* Button Styling */
+        .button {
+            background: #03a9f4;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        .button:hover {
+            background: #0288d1;
+        }
+        .button:active {
+            background: #0277bd;
+        }
+
+        /* Status Visualizer Styling */
+        .status-visualizer {
+            width: 180px; height: 180px; border-radius: 50%; background-color: #2a2a2a; display: flex; justify-content: center; align-items: center; margin-bottom: 20px; position: relative; overflow: hidden; border: 4px solid #444; transition: border-color 0.4s ease, box-shadow 0.4s ease; box-shadow: 0 0 10px rgba(0,0,0,0.5) inset;
+        }
+        .status-visualizer::before { /* Inner gradient/pattern */
+            content: ''; position: absolute; inset: 0; border-radius: 50%;
+            background: radial-gradient(circle, rgba(3, 169, 244, 0.05) 0%, rgba(0, 100, 150, 0.1) 60%, rgba(10, 10, 20, 0.2) 100%);
+            opacity: 0.7; transition: opacity 0.5s ease, transform 0.5s ease; transform: scale(1); z-index: 1;
+        }
+         .status-visualizer span { /* Optional text inside circle */
+            position: relative; z-index: 2; font-size: 0.9em; color: #ccc; background: rgba(0,0,0,0.4); padding: 4px 10px; border-radius: 10px;
+         }
+
+        /* Status Text Styling */
+        .status-text { margin-top: -10px; margin-bottom: 20px; font-weight: 500; color: #aaa; min-height: 1.5em; text-align: center; transition: color 0.4s ease; }
+
+        /* State-specific styles */
+        .status-visualizer.listening, .status-visualizer.speaking { border-color: #03a9f4; box-shadow: 0 0 20px rgba(3, 169, 244, 0.6); }
+        .status-visualizer.listening::before { animation: subtle-pulse 2.5s infinite ease-in-out; opacity: 0.9; }
+        .status-visualizer.speaking::before { animation: active-pulse 1.2s infinite ease-in-out; opacity: 1; }
+        .status-text.listening, .status-text.speaking { color: #03a9f4; }
+
+        .status-visualizer.processing { border-color: #ab47bc; box-shadow: 0 0 20px rgba(171, 71, 188, 0.5); }
+        .status-visualizer.processing::before { animation: spin 1.8s linear infinite; opacity: 0.8; }
+        .status-text.processing { color: #ab47bc; }
+
+        .status-visualizer.ai-speaking { border-color: #4caf50; box-shadow: 0 0 20px rgba(76, 175, 80, 0.5); }
+        .status-visualizer.ai-speaking::before { animation: gentle-glow 2s infinite alternate; opacity: 0.9; }
+         .status-text.ai-speaking { color: #4caf50; }
+
+        .status-visualizer.error { border-color: #f44336; box-shadow: 0 0 20px rgba(244, 67, 54, 0.6); }
+        .status-text.error { color: #f44336; }
+
+        /* Animations */
+        @keyframes subtle-pulse { 0%, 100% { transform: scale(1); opacity: 0.7; } 50% { transform: scale(1.03); opacity: 0.9; } }
+        @keyframes active-pulse { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.05); opacity: 1; } }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes gentle-glow { from { opacity: 0.7; } to { opacity: 0.9; } }
+
+        #recordedAudioPlayback { display: none; } /* Hide debug player */
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.22/dist/bundle.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.22/dist/bundle.min.js"></script>
 
 </head>
 <body>
     <div class="container">
-        <h1>Monika - Best Conversational AI</h1>
-
-        <div id="status" class="status idle">Initializing...</div>
-
-        <div class="section">
-            <h2>Assistant Says:</h2>
-            <textarea id="transcriptOutput" readonly placeholder="Assistant's response will appear here..."></textarea>
+        <h1>Monika - AI Assistant</h1>
+        <div id="status-visualizer" class="status-visualizer">
+            <span id="visualizer-text">Idle</span>
+        </div>
+        <div id="status-text" class="status-text">Initializing...</div>
+        <div>
+            <button id = "stopConversation" class="button">Stop Conversation</button>
+        </div>
+        <div class="section" hidden>
+            <textarea id="transcriptOutput" readonly  hidden placeholder="Assistant's response will appear here..."></textarea>
         </div>
 
-        <div class="section">
-            <audio id="ttsAudioOutput" controls title="Listen to synthesized speech"></audio>
-            <div id="ttsStatus"></div> </div>
-
-         <audio id="recordedAudioPlayback" controls title="Listen to your last utterance" style="display: none;"></audio>
-         <div class="section" style="text-align: center;"> 
-            <button id="stopConv" style="
-            padding: 12px 24px;
-            font-size: 16px;
-            background-color: #dc3545;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);"
-            onmouseover="this.style.backgroundColor='#c82333'"
-            onmouseout="this.style.backgroundColor='#dc3545'">
-            Stop Conversation
-            </button>
+        <div class="section" hidden>
+            <audio id="ttsAudioOutput" controls  title="Listen to synthesized speech"></audio>
+            <div id="ttsStatus"></div>
         </div>
+
+         <audio id="recordedAudioPlayback" controls hidden title="Listen to your last utterance"></audio>
     </div>
 
-   
     <script src="/static/script.js"></script>
 </body>
 </html>

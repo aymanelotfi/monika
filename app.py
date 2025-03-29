@@ -38,7 +38,7 @@ UPLOAD_FOLDER = "./uploads"
 SECRET_KEY = os.environ.get("SECRET_KEY", "a-very-secret-development-key")
 
 # Whisper STT Config
-MODEL_SIZE = "tiny"  # Or "tiny", "small", "medium", "large"
+MODEL_SIZE = "small"  # Or "tiny", "small", "medium", "large"
 ALLOWED_EXTENSIONS = {
     "wav",
     "mp3",
@@ -66,6 +66,8 @@ Use these tags sparingly and only where appropriate to make the speech sound mor
 Keep the response concise and relevant to the user's input.
 Do not use the tags at the beginning of a sentence.
 Use a lot of emotionals tags in the text, but do not overuse them. Use them only when it makes sense.
+
+If the user asked to stop the conversation, answer "Stop" and do not say anything else.
 """
 
 # Configure the Gemini client (do this once at startup)
@@ -382,7 +384,7 @@ def gemini_process_text():
         # Extract the text from the response
         # Handle potential blocks or safety issues if needed
         processed_text = response.text
-        app.logger.info(f"Gemini processed text: '{processed_text[:100]}...'")
+        app.logger.info(f"Gemini processed text: '{processed_text[:200]}...'")
 
         return jsonify({"processed_text": processed_text})
 
