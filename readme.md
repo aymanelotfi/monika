@@ -29,7 +29,9 @@ Watch Monika in action:
     cd my_app
     ```
 
-2. Instaluirements.txt
+2. Install requirements:
+    ```bash
+    pip install -r requirements.txt
     ```
 
 3. Set up environment variables:
