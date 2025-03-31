@@ -65,7 +65,6 @@ Use these tags sparingly and only where appropriate to make the speech sound mor
 Keep the response concise and relevant to the user's input.
 Do not use the tags at the beginning of a sentence.
 Use a lot of emotionals tags in the text, but do not overuse them. Use them only when it makes sense.
-
 If the user asked to stop the conversation, answer "Stop" and do not say anything else.
 """
 
@@ -185,7 +184,7 @@ def play_text_to_speech_task(
     with app_instance.app_context():
         instance_id = str(uuid.uuid4())[:8]
         app.logger.debug(
-            f'[{instance_id}] Starting TTS synthesis background task for: "{text[:200]}..."'
+            f'[{instance_id}] Starting TTS synthesis background task for: "{text[:100]}..."'
         )
 
         first_chunk_time = None
@@ -347,7 +346,7 @@ def gemini_process_text():
         return jsonify({"error": "Missing 'text' field in request body."}), 400
 
     original_text = req_data["text"]
-    app.logger.info(f"Received text for Gemini processing: '{original_text[:200]}...'")
+    app.logger.info(f"Received text for Gemini processing: '{original_text[:100]}...'")
 
     try:
         model = genai.GenerativeModel(

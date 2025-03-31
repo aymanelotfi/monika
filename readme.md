@@ -15,7 +15,7 @@ Monika is an AI-powered assistant that combines speech-to-text (STT), natural la
 
 Watch Monika in action:
 
-[![Monika AI Assistant Demo](https://img.youtube.com/vi/DEMO_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=DEMO_VIDEO_ID)
+[![Monika AI Assistant Demo](https://img.youtube.com/vi/_vdlT1uJq2k/0.jpg)](https://www.youtube.com/watch?v=_vdlT1uJq2k)
 
 ## Requirements
 
@@ -84,3 +84,5 @@ This project is licensed under the MIT License. See the `LICENSE` file for detai
 - **Expanded Language Support:** Add support for multiple languages in both STT and TTS modules.
 - **Custom Voice Options:** Allow users to select different voices for the assistant.
 - **Offline Mode:** Develop capabilities for basic functionality without internet connectivity.
+
+
