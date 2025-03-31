@@ -54,7 +54,7 @@ ALLOWED_EXTENSIONS = {
 TTS_ENGINE_NAME = "orpheus"
 
 
-# --- Gemini Configuration ---  # <-- New Section
+# --- Gemini Configuration --- say that there is a latency in the TTS model that needs to be improved + allow the user to interrupt
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_MODEL_NAME = "gemini-2.0-flash"
 # System prompt instructing Gemini
@@ -69,7 +69,7 @@ Use a lot of emotionals tags in the text, but do not overuse them. Use them only
 If the user asked to stop the conversation, answer "Stop" and do not say anything else.
 """
 
-# Configure the Gemini client (do this once at startup)
+# Configure the Gemini client
 if GEMINI_API_KEY:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
@@ -80,7 +80,7 @@ if GEMINI_API_KEY:
         logging.error(
             f"Error configuring Gemini API: {e}. Gemini features will be disabled."
         )
-        GEMINI_API_KEY = None  # Disable Gemini if configuration fails
+        GEMINI_API_KEY = None
 else:
     logging.warning(
         "GEMINI_API_KEY environment variable not set. Gemini features will be disabled."
@@ -89,14 +89,12 @@ else:
 
 # --- Logging Setup ---
 log_level = logging.DEBUG if DEBUG_MODE else logging.INFO
-# --- Ensure Upload Folder Exists ---
 if not os.path.exists(UPLOAD_FOLDER):
     try:
         os.makedirs(UPLOAD_FOLDER)
         logging.info(f"Created upload directory: {UPLOAD_FOLDER}")
     except OSError as e:
         logging.error(f"Error creating upload directory {UPLOAD_FOLDER}: {e}")
-        # Decide if you want to exit or try to continue
 
 # --- Initialize Flask App ---
 app = Flask(__name__)
