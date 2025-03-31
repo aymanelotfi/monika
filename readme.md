@@ -15,7 +15,7 @@ Monika is an AI-powered assistant that combines speech-to-text (STT), natural la
 
 Watch Monika in action:
 
-[![Monika AI Assistant Demo](https://www.youtube.com/watch?v=_vdlT1uJq2k)](https://www.youtube.com/watch?v=_vdlT1uJq2k)
+[![YouTube](http://i.ytimg.com/vi/_vdlT1uJq2k/hqdefault.jpg)](https://www.youtube.com/watch?v=_vdlT1uJq2k)
 
 ## Requirements
 
