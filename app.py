@@ -51,15 +51,14 @@ ALLOWED_EXTENSIONS = {
 }  # For file upload check
 
 # RealtimeTTS Config
-TTS_ENGINE_NAME = "orpheus"  # Or other supported engines if added
+TTS_ENGINE_NAME = "orpheus"
 
 
 # --- Gemini Configuration ---  # <-- New Section
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-# Using 1.5 Flash as it's the latest fast model. Adjust if a specific "2.0 Flash" name becomes available.
 GEMINI_MODEL_NAME = "gemini-2.0-flash"
 # System prompt instructing Gemini
-GEMINI_SYSTEM_PROMPT = """You are processing text that will be spoken aloud by a Text-to-Speech (TTS) model.
+GEMINI_SYSTEM_PROMPT = """You are processing text that will be spoken aloud by a Text-to-Speech (TTS) model named Monika.
 Refine or respond to the user's text naturally, as if you were speaking.
 You can use the following emotive tags to add expressiveness to the TTS output: <laugh>,<chuckle>,<cough>, <sniffle>, <groan>, <yawn>, <gasp>.
 Use these tags sparingly and only where appropriate to make the speech sound more natural. Do not explain the tags, just use them within the text.
@@ -116,7 +115,6 @@ try:
     app.logger.info("Whisper model loaded successfully.")
 except Exception as e:
     app.logger.error(f"CRITICAL: Error loading Whisper model ({MODEL_SIZE}): {e}")
-    # Consider how to handle this error - maybe exit or run degraded
 
 # Initialize RealtimeTTS Engine
 tts_engine = None
@@ -135,7 +133,6 @@ except Exception as e:
     app.logger.error(
         f"CRITICAL: Error initializing TTS engine ({TTS_ENGINE_NAME}): {e}"
     )
-    # Consider how to handle this error
 
 # --- TTS State Management ---
 # A single queue is sufficient because the semaphore ensures only one TTS task runs
@@ -180,28 +177,25 @@ def create_wave_header_for_engine(engine):  # Same as FastAPI version
 
 
 def play_text_to_speech_task(
-    app_instance,  # Pass the app instance to create context
+    app_instance,
     stream: TextToAudioStream,
     text: str,
     audio_queue: Queue,
     semaphore: threading.Semaphore,
 ):
     """Background task to perform TTS synthesis and queue audio chunks."""
-    # --- Use app.app_context() to make app.logger work ---
     with app_instance.app_context():
         instance_id = str(uuid.uuid4())[:8]
-        # Now app.logger (or current_app.logger) should work correctly
-        app.logger.debug(  # Using app is often preferred inside context
+        app.logger.debug(
             f'[{instance_id}] Starting TTS synthesis background task for: "{text[:200]}..."'
         )
 
-        first_chunk_time = None  # For debugging first chunk latency
+        first_chunk_time = None
 
         def on_audio_chunk(chunk):
             nonlocal first_chunk_time
             if first_chunk_time is None:
                 first_chunk_time = datetime.now()
-                # Use app.logger here too if needed
                 app.logger.debug(
                     f"[{instance_id}] First TTS chunk received at {first_chunk_time}"
                 )
@@ -231,7 +225,6 @@ def play_text_to_speech_task(
             )
             audio_queue.put(None)
         finally:
-            # CRITICAL: Release the semaphore
             semaphore.release()
             app.logger.debug(f"[{instance_id}] Released TTS semaphore.")
 
@@ -239,7 +232,6 @@ def play_text_to_speech_task(
 def tts_audio_stream_generator(audio_queue: Queue):
     """Generator function to yield audio chunks from the queue for Flask Response."""
     app.logger.debug("Flask TTS audio generator started.")
-    # Determine if header is needed (e.g., not ElevenLabs)
     send_wave_headers = True  # Assume WAV unless engine changes
     header_sent = False
 
@@ -258,7 +250,6 @@ def tts_audio_stream_generator(audio_queue: Queue):
                 yield header
             header_sent = True  # Don't send header again
 
-        # app.logger.debug(f"Flask TTS generator yielding audio chunk size {len(chunk)}.")
         yield chunk
 
     app.logger.debug("Flask TTS audio generator finished.")
@@ -269,8 +260,6 @@ def tts_audio_stream_generator(audio_queue: Queue):
 
 @app.route("/favicon.ico")
 def favicon():
-    # Flask automatically serves static files if the folder exists
-    # but an explicit route can be clearer sometimes.
     return send_from_directory(
         os.path.join(app.root_path, "static"),
         "favicon.ico",
@@ -287,7 +276,6 @@ def index():
 @app.route("/transcribe", methods=["POST"])
 def transcribe_audio():
     """Handles audio file upload, transcribes using Whisper."""
-    # app.logger.info(f"Fuck off")
     time_0 = datetime.now()
     if not whisper_model:
         app.logger.info("Transcription request failed: Whisper model not loaded.")
@@ -305,11 +293,7 @@ def transcribe_audio():
         app.logger.info("Transcription request failed: No file selected.")
         return jsonify({"error": "No selected file."}), 400
 
-    # Optional: Check file extension using ALLOWED_EXTENSIONS
-    # if file and allowed_file(file.filename):
-    if file:  # Proceed even if extension check is skipped or fails initially
-        # Use secure_filename for safety, although we generate a UUID-based name anyway
-        # original_filename = secure_filename(file.filename) # Keep for app.logger if needed
+    if file:
         file_extension = (
             file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "webm"
         )
@@ -322,9 +306,7 @@ def transcribe_audio():
             file.save(filepath)
             app.logger.info(f"File saved successfully to {filepath}")
 
-            # Perform transcription
             app.logger.info(f"Starting transcription for {filepath}...")
-            # Use fp16=False if on CPU or experiencing issues
             result = whisper_model.transcribe(filepath, fp16=False)
             transcript_text = result["text"]
             app.logger.info(f"Transcription complete for {filepath}.")
@@ -340,7 +322,6 @@ def transcribe_audio():
             )
             return jsonify({"error": f"Transcription failed: {str(e)}"}), 500
         finally:
-            # Clean up the temporary file
             if os.path.exists(filepath):
                 try:
                     os.remove(filepath)
@@ -348,7 +329,6 @@ def transcribe_audio():
                 except OSError as e:
                     app.logger.error(f"Error removing temporary file {filepath}: {e}")
     else:
-        # This part might be reached if allowed_file check is enabled and fails
         app.logger.warning(
             f"Transcription request failed: File type not allowed ({file.filename})."
         )
@@ -369,20 +349,16 @@ def gemini_process_text():
         return jsonify({"error": "Missing 'text' field in request body."}), 400
 
     original_text = req_data["text"]
-    app.logger.info(f"Received text for Gemini processing: '{original_text[:100]}...'")
+    app.logger.info(f"Received text for Gemini processing: '{original_text[:200]}...'")
 
     try:
-        # Initialize the specific model for generation
         model = genai.GenerativeModel(
             model_name=GEMINI_MODEL_NAME, system_instruction=GEMINI_SYSTEM_PROMPT
         )
 
         # Generate content
-        # Combine system prompt (implicitly handled by system_instruction) and user text
-        response = model.generate_content(original_text)  # Send only user text here
+        response = model.generate_content(original_text)
 
-        # Extract the text from the response
-        # Handle potential blocks or safety issues if needed
         processed_text = response.text
         app.logger.info(f"Gemini processed text: '{processed_text[:200]}...'")
 
@@ -391,8 +367,6 @@ def gemini_process_text():
     # Handle potential errors from the Gemini API
     except Exception as e:
         app.logger.error(f"Error during Gemini API call: {e}", exc_info=True)
-        # Check for specific Gemini exceptions if the library provides them
-        # For now, return a generic error
         return jsonify({"error": f"Gemini processing failed: {str(e)}"}), 500
 
 
@@ -411,10 +385,8 @@ def text_to_speech():
 
     app.logger.info(f'Received TTS request for text: "{text[:200]}..."')
 
-    # Try to acquire the semaphore without blocking
     if play_text_to_speech_semaphore.acquire(blocking=False):
         app.logger.debug("TTS semaphore acquired.")
-        # The background task will put data into the shared tts_audio_queue
         threading.Thread(
             target=play_text_to_speech_task,
             args=(
@@ -424,7 +396,7 @@ def text_to_speech():
                 tts_audio_queue,
                 play_text_to_speech_semaphore,
             ),
-            daemon=True,  # Allows app to exit even if thread hangs (use carefully)
+            daemon=True,
         ).start()
 
         # Create the generator for this response

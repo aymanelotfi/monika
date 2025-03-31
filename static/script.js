@@ -135,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try { vad_web.destroy(); } catch (e) { console.error("Error destroying VAD", e); }
         isListening = false; isSpeaking = false; isVadReady = false;
         setStatus("VAD stopped.", 'idle'); console.log("VAD destroyed.");
-       // clearPreviousRun(); // Clear all outputs and reset state
+        clearPreviousRun(); // Clear all outputs and reset state
     }
 
     stopConversationButton.addEventListener('click', stopConversation);
